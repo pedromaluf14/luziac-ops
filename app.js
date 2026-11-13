@@ -298,8 +298,7 @@ function openTask(t, preset={}){
   S.editTask=t?t.id:null;
   S.editItems=t?items(t).map(i=>({...i})):[];
   $("dTaskTitle").textContent=t?"Tarefa":"Nova tarefa";
-  $("tplRow").hidden=!!t;
-  $("tTpl").innerHTML=`<option value="">Tarefa em branco</option>`+S.templates.map(m=>`<option value="${esc(m.id)}">${esc(m.nome)}</option>`).join("");
+  $("tTpl").innerHTML=`<option value="">${S.templates.length?"Usar um modelo…":"Nenhum modelo criado ainda"}</option>`+S.templates.map(m=>`<option value="${esc(m.id)}">${esc(m.nome)}</option>`).join("");
   $("tTitulo").value=t?.titulo||"";
   $("tCliente").innerHTML=clientOptions(t?.cliente??preset.cliente??(S.fClient||""),false);
   $("tResp").innerHTML=teamOptions(t?.responsavel??preset.responsavel??"");
@@ -319,7 +318,7 @@ function drawItems(){
     <select data-f="resp" aria-label="Responsável pela etapa">${teamOptions(i.resp||"","Quem?")}</select>
     <input type="date" data-f="prazo" value="${esc(i.prazo||"")}" aria-label="Prazo da etapa">
     <span class="mini"><button type="button" data-mv="-1" aria-label="Subir">↑</button><button type="button" data-mv="1" aria-label="Descer">↓</button><button type="button" data-rm aria-label="Remover">×</button></span></li>`).join("")
-    || `<li style="display:block" class="muted">Nenhuma etapa. Use um modelo ou adicione abaixo.</li>`;
+    || `<li style="display:block" class="muted">Nenhuma etapa ainda. Escolha um modelo acima ou adicione abaixo.</li>`;
 }
 function itemsEditor(listEl, getArr, redraw){
   listEl.addEventListener("input",e=>{ const li=e.target.closest("li[data-ix]"); if(!li) return; const it=getArr()[+li.dataset.ix], f=e.target.dataset.f; if(!f) return;
@@ -331,10 +330,12 @@ function itemsEditor(listEl, getArr, redraw){
 }
 itemsEditor($("tItems"),()=>S.editItems,drawItems);
 $("tAddItem").onclick=()=>{ S.editItems.push({id:uid(),texto:"",resp:"",prazo:"",feito:false}); drawItems(); $("tItems").querySelector("li:last-child .txt")?.focus() };
-$("tTpl").onchange=e=>{ const m=S.templates.find(x=>x.id===e.target.value);
-  S.editItems=m?(m.itens||[]).map(i=>({id:uid(),texto:i.texto,resp:i.resp||"",prazo:"",feito:false})):[];
-  if(m && !$("tTitulo").value.trim()) $("tTitulo").value=m.nome+" · ";
-  drawItems() };
+/* modelo: preenche o checklist (se já houver etapas, as do modelo entram no fim) */
+$("tTpl").onchange=e=>{ const m=S.templates.find(x=>x.id===e.target.value); if(!m) return;
+  const keep=S.editItems.filter(i=>(i.texto||"").trim());
+  S.editItems=keep.concat((m.itens||[]).map(i=>({id:uid(),texto:i.texto,resp:i.resp||"",prazo:"",feito:false})));
+  if(!$("tTitulo").value.trim()) $("tTitulo").value=m.nome+" · ";
+  e.target.value=""; drawItems() };
 $("fTask").onsubmit=async e=>{
   e.preventDefault();
   const prev=S.editTask?S.tasks.find(t=>t.id===S.editTask):null;

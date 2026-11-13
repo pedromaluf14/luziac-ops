@@ -65,7 +65,6 @@
 <dialog id="dTask" class="modal">
   <form id="fTask" class="m">
     <div class="m-head"><h3 id="dTaskTitle">Nova tarefa</h3><button type="button" class="x" data-close aria-label="Fechar">×</button></div>
-    <label class="f" id="tplRow"><span>Começar de um modelo</span><select id="tTpl"></select></label>
     <label class="f"><span>Tarefa</span><input id="tTitulo" required maxlength="200" placeholder="Ex.: Criativos Park GRU"></label>
     <div class="row3">
       <label class="f"><span>Cliente</span><select id="tCliente"></select></label>
@@ -75,6 +74,7 @@
     <label class="f"><span>Etapa</span><select id="tStatus"></select></label>
     <div class="f">
       <span>Checklist <small class="muted">· a tarefa fica com quem tem a próxima etapa</small></span>
+      <div class="tpl-pick"><select class="pill-select" id="tTpl" aria-label="Usar um modelo"></select></div>
       <ol class="cl-edit" id="tItems"></ol>
       <button type="button" class="add-line" id="tAddItem">+ adicionar etapa</button>
     </div>

@@ -241,6 +241,8 @@ dialog::backdrop{ background:rgba(5,5,6,.6); -webkit-backdrop-filter:blur(4px); 
   .cl-edit li select,.cl-edit li input[type=date]{ grid-column:2 / 3; }
   .cl-edit.tpl li{ grid-template-columns:auto minmax(0,1fr) auto; }
 }
+.tpl-pick .pill-select{ width:100%; }
+[data-mode="light"] .tpl-pick .pill-select{ background-color:var(--bg); }
 .add-line{ align-self:flex-start; background:none; border:0; color:var(--pink); font-weight:600; cursor:pointer; padding:4px 0; font-size:13px; }
 .confirm{ background:var(--bad-soft); color:var(--bad); border-radius:8px; padding:9px 12px; font-size:13px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .err{ color:var(--bad); font-size:13px; margin:0; }
