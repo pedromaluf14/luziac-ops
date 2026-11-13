@@ -176,7 +176,9 @@ function clientStats(id){
     doing:open.filter(t=>t.status==="andamento").length, alerts:al.length, urgent:al.some(a=>a.nivel==="urgente"),
     next:open.map(dueOf).filter(Boolean).sort()[0]||"", holders:[...new Set(open.map(holder).filter(Boolean))]};
 }
-const mono=name=>`<span class="mono">${esc(initials(name.replace(/^(lopes|rede)\s+/i,"")))}</span>`;
+const monoTxt=name=>{ const w=String(name).normalize("NFD").replace(/[\u0300-\u036f]/g,"").split(/\s+/).filter(Boolean);
+  return (w.length>1?w[0][0]+w[1][0]:w[0].slice(0,2)).toUpperCase() };
+const mono=name=>`<span class="mono">${esc(monoTxt(name))}</span>`;
 function viewClients(){
   const q=(S.cq||"").trim().toLowerCase();
   const all=[...S.clients].sort((a,b)=>a.name.localeCompare(b.name,"pt")).filter(c=>!q||c.name.toLowerCase().includes(q));
