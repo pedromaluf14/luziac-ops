@@ -16,7 +16,7 @@ const COLS = [
   ["feito","Concluído","var(--good)"]];
 
 /* ===== Estado e utilitários ===== */
-const S = {sb:null, me:null, email:"", clients:[], tasks:[], templates:[], fClient:"", fWho:"", q:"", route:{tab:"quadro"},
+const S = {sb:null, me:null, email:"", clients:[], tasks:[], templates:[], alerts:[], torre:null, showSeen:false, fClient:"", fWho:"", q:"", route:{tab:"quadro"},
   editTask:null, editItems:[], editTpl:null, tplItems:[]};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -57,7 +57,7 @@ function parseRoute(){
   const h=(location.hash||"#quadro").slice(1);
   if(h.startsWith("cliente-")) return {tab:"clientes", client:h.slice(8)};
   if(h.startsWith("pessoa-")) return {tab:"equipe", person:TEAM.find(p=>slug(p.n)===h.slice(7))?.n};
-  if(["quadro","clientes","equipe","modelos"].includes(h)) return {tab:h};
+  if(["quadro","clientes","equipe","modelos","torre"].includes(h)) return {tab:h};
   return {tab:"quadro"};
 }
 window.addEventListener("hashchange",()=>{ S.route=parseRoute(); render(); window.scrollTo({top:0}) });
@@ -67,11 +67,11 @@ function render(){
   document.querySelectorAll("[data-tab]").forEach(a=>a.classList.toggle("active",a.dataset.tab===S.route.tab));
   const home=S.route.tab==="quadro";
   document.querySelector(".hero").hidden=!home;
-  renderHello(); renderForYou();
+  renderHello(); renderForYou(); renderTorreBadge();
   const r=S.route;
   $("view").innerHTML = r.tab==="clientes" ? (r.client?viewClient(r.client):viewClients())
     : r.tab==="equipe" ? (r.person?viewPerson(r.person):viewTeam())
-    : r.tab==="modelos" ? viewTemplates() : viewBoard();
+    : r.tab==="modelos" ? viewTemplates() : r.tab==="torre" ? viewTorre() : viewBoard();
   bindView();
 }
 
@@ -218,6 +218,34 @@ function viewTemplates(){
       <ol class="tpl-steps">${(t.itens||[]).map(i=>`<li>${esc(i.texto)}${i.resp?` <span>· ${esc(i.resp)}</span>`:""}</li>`).join("")}</ol></button>`).join("")||'<p class="muted">Nenhum modelo ainda.</p>'}</div>`;
 }
 
+/* ===== Torre de controle ===== */
+const TIPOS={verba:"Verba",cpl_meta:"CPL x meta",cpl_piorou:"CPL piorou",sem_lead:"Sem leads",conta_parada:"Conta parada",conv_zerada:"Conversões zeradas"};
+const ago=iso=>{ if(!iso) return "—"; const m=Math.round((Date.now()-Date.parse(iso))/6e4); return m<1?"agora":m<60?`há ${m} min`:m<1440?`há ${Math.round(m/60)} h`:`há ${Math.round(m/1440)} d` };
+function renderTorreBadge(){ const b=$("torreBadge"); if(!b) return; const k=S.alerts.filter(a=>a.ativo&&!a.visto_por&&a.nivel==="urgente").length; b.hidden=!k; b.textContent=k }
+function alertCard(a){
+  const cname=a.cliente?clientName(a.cliente):(a.conta||"Conta sem cliente");
+  return `<div class="alert ${a.nivel} ${a.visto_por?"seen":""}">
+    <div class="al-top"><span class="ct">${esc(cname)}</span><span class="al-tags"><span class="chip">${a.plataforma==="google"?"Google Ads":"Meta"}</span><span class="chip">${esc(TIPOS[a.tipo]||a.tipo)}</span></span></div>
+    <div class="al-t">${esc(a.titulo)}</div>
+    <div class="al-d">${esc(a.detalhe||"")}</div>
+    <div class="al-foot"><span class="muted">${a.conta&&a.cliente?esc(a.conta)+" · ":""}desde ${ago(a.criado_em)}${a.visto_por?` · visto por ${esc(a.visto_por)}`:""}</span><span class="sp"></span>
+      <button class="btn" type="button" data-altask="${esc(a.id)}">Criar tarefa</button>
+      ${a.visto_por?`<button class="btn ghost" type="button" data-alseen="${esc(a.id)}" data-v="0">Desfazer</button>`:`<button class="btn ghost" type="button" data-alseen="${esc(a.id)}" data-v="1">Marcar como visto</button>`}</div></div>`;
+}
+function viewTorre(){
+  const act=S.alerts.filter(a=>a.ativo), vis=act.filter(a=>S.showSeen||!a.visto_por);
+  const urg=vis.filter(a=>a.nivel==="urgente"), att=vis.filter(a=>a.nivel!=="urgente");
+  const st=S.torre, seen=act.filter(a=>a.visto_por).length;
+  const group=(title,list,cls)=>list.length?`<div class="group"><div class="group-h"><span class="gname ${cls}">${title}</span><span class="gcount">${list.length}</span></div><div class="alerts">${list.map(alertCard).join("")}</div></div>`:"";
+  return `<div class="page-head"><div><span class="label">Campanhas · Meta e Google Ads</span><h2 class="sec-title" style="font-size:32px">Torre de controle<span class="grad">.</span></h2>
+      <p class="muted" style="margin:4px 0 0">Verificado ${st?.ultima_execucao?ago(st.ultima_execucao):"ainda não"}${st?.contas?` · ${st.contas} contas`:""} · atualiza sozinha de hora em hora</p>
+      ${st?.erro?`<p class="err" style="margin-top:6px">Última verificação teve problema: ${esc(st.erro)}</p>`:""}</div>
+    <div class="nums torre-nums"><div class="${urg.length?"bad":""}"><b>${act.filter(a=>a.nivel==="urgente"&&!a.visto_por).length}</b><small>urgentes</small></div><div class="warn"><b>${act.filter(a=>a.nivel!=="urgente"&&!a.visto_por).length}</b><small>atenção</small></div><div><b>${seen}</b><small>vistos</small></div></div></div>
+    <label class="step-check" style="margin-bottom:14px"><input type="checkbox" id="showSeen" ${S.showSeen?"checked":""}>Mostrar alertas já vistos</label>
+    ${group("Urgente",urg,"u")}${group("Atenção",att,"w")}
+    ${vis.length?"":`<div class="card torre-ok"><b>Nenhum alerta${S.showSeen?"":" novo"}.</b><span class="muted">${st?.ultima_execucao?"As contas estão dentro do esperado.":"A primeira verificação ainda não rodou."}</span></div>`}`;
+}
+
 /* ===== Eventos da área principal ===== */
 function bindView(){
   const q=$("q"); if(q) q.oninput=e=>{ S.q=e.target.value; const pos=e.target.selectionStart; render(); const n=$("q"); n.focus(); try{n.setSelectionRange(pos,pos)}catch(_){} };
@@ -226,12 +254,16 @@ function bindView(){
   const cl=$("clear"); if(cl) cl.onclick=()=>{ S.fClient=""; S.fWho=""; S.q=""; render() };
   const nc=$("newClient"); if(nc) nc.onclick=()=>{ $("cNome").value=""; $("dClient").showModal() };
   const nt=$("newTpl"); if(nt) nt.onclick=()=>openTpl(null);
+  const ss=$("showSeen"); if(ss) ss.onchange=e=>{ S.showSeen=e.target.checked; render() };
 }
 document.addEventListener("click",e=>{
   if(e.target.closest("[data-close]")){ e.target.closest("dialog").close(); return }
   if(e.target.closest("[data-stop]")) return;
   const add=e.target.closest("[data-add]"); if(add){ openTask(null, JSON.parse(add.dataset.add)); return }
   const tp=e.target.closest("[data-tpl]"); if(tp){ openTpl(S.templates.find(x=>x.id===tp.dataset.tpl)); return }
+  const at=e.target.closest("[data-altask]"); if(at){ const a=S.alerts.find(x=>x.id===at.dataset.altask);
+    openTask(null,{cliente:a.cliente||"",titulo:a.titulo,notas:`Alerta da Torre de controle (${a.conta||""}):\n${a.detalhe||""}`,responsavel:"Pedro"}); return }
+  const al=e.target.closest("[data-alseen]"); if(al){ markAlert(al.dataset.alseen, al.dataset.v==="1"); return }
   const tk=e.target.closest("[data-task]"); if(tk && !e.target.closest("dialog")){ openTask(S.tasks.find(t=>t.id===tk.dataset.task)); return }
 });
 document.addEventListener("keydown",e=>{ if(e.key==="Enter"){ const tk=e.target.closest?.(".tcard"); if(tk) openTask(S.tasks.find(t=>t.id===tk.dataset.task)) } });
@@ -250,10 +282,13 @@ document.addEventListener("drop",e=>{ const col=e.target.closest?.(".col"); if(!
 
 /* ===== Dados ===== */
 async function loadAll(){
-  const [c,t,m]=await Promise.all([
+  const [c,t,m,al,ts]=await Promise.all([
     S.sb.from("clients").select("id,name"),
     S.sb.from("tasks").select("*"),
-    S.sb.from("templates").select("*").order("nome")]);
+    S.sb.from("templates").select("*").order("nome"),
+    S.sb.from("alertas").select("*").eq("ativo",true),
+    S.sb.from("torre_status").select("*").eq("id",1)]);
+  S.alerts=al&&!al.error?al.data:[]; S.torre=ts&&!ts.error?ts.data?.[0]:null;
   if(c.error||t.error){ $("sync").textContent="sem conexão com os dados"; return }
   S.clients=c.data; S.tasks=t.data.map(fromRow); S.templates=m.error?[]:m.data;
   $("sync").textContent="sincronizado ao vivo"; render();
@@ -264,7 +299,13 @@ function subscribe(){
   S.sb.channel("ops")
     .on("postgres_changes",{event:"*",schema:"public",table:"tasks"},reloadSoon)
     .on("postgres_changes",{event:"*",schema:"public",table:"clients"},reloadSoon)
-    .on("postgres_changes",{event:"*",schema:"public",table:"templates"},reloadSoon).subscribe();
+    .on("postgres_changes",{event:"*",schema:"public",table:"templates"},reloadSoon)
+    .on("postgres_changes",{event:"*",schema:"public",table:"alertas"},reloadSoon).subscribe();
+}
+async function markAlert(id,on){
+  const a=S.alerts.find(x=>x.id===id); if(!a) return;
+  a.visto_por=on?(S.me||S.email):null; a.visto_em=on?new Date().toISOString():null; render();
+  await S.sb.from("alertas").update({visto_por:a.visto_por,visto_em:a.visto_em}).eq("id",id);
 }
 /* etapa automática pelo checklist */
 function autoStatus(status, list){
@@ -299,12 +340,12 @@ function openTask(t, preset={}){
   S.editItems=t?items(t).map(i=>({...i})):[];
   $("dTaskTitle").textContent=t?"Tarefa":"Nova tarefa";
   $("tTpl").innerHTML=`<option value="">${S.templates.length?"Usar um modelo…":"Nenhum modelo criado ainda"}</option>`+S.templates.map(m=>`<option value="${esc(m.id)}">${esc(m.nome)}</option>`).join("");
-  $("tTitulo").value=t?.titulo||"";
+  $("tTitulo").value=t?.titulo||preset.titulo||"";
   $("tCliente").innerHTML=clientOptions(t?.cliente??preset.cliente??(S.fClient||""),false);
   $("tResp").innerHTML=teamOptions(t?.responsavel??preset.responsavel??"");
   $("tPrazo").value=t?.prazo||"";
   $("tStatus").innerHTML=COLS.map(([k,l])=>`<option value="${k}" ${k===(t?.status||preset.status||"fazer")?"selected":""}>${l}</option>`).join("");
-  $("tNotas").value=t?.notas||"";
+  $("tNotas").value=t?.notas||preset.notas||"";
   $("tDel").hidden=!t; $("tConfirm").hidden=true; $("tErr").hidden=true;
   drawItems();
   $("dTask").showModal();

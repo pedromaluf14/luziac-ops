@@ -1,0 +1,24 @@
+name: Torre de controle
+
+on:
+  schedule:
+    - cron: "23 * * * *"   # a cada hora (minuto 23, UTC)
+  workflow_dispatch:        # botão "Run workflow" para rodar na hora
+
+concurrency:
+  group: torre
+  cancel-in-progress: false
+
+jobs:
+  alertas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verificar contas e atualizar alertas
+        env:
+          WINDSOR_API_KEY: ${{ secrets.WINDSOR_API_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python scripts/torre.py
