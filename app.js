@@ -1,208 +1,424 @@
-/* LUZIAC Ops — quadro de tarefas da equipe (GitHub Pages + Supabase) */
+/* LUZIAC Ops — tarefas da equipe com checklist por etapa (GitHub Pages + Supabase) */
 
-/* ===== Configuração da equipe e do fluxo ===== */
-const COLS = [["fazer","A fazer"],["producao","Em produção"],["revisao","Em revisão"],["aguardando","Aguardando cliente"],["aprovado","Aprovado / publicar"],["feito","Entregue"]];
-const ACTIVE = new Set(["producao","revisao"]);
+/* ===== Configuração ===== */
 const TEAM = [
-  {n:"Carol",    role:"Coordenadora de Operações", area:"operacoes"},
-  {n:"João",     role:"Filmmaker",                 area:"video"},
-  {n:"Jéssica",  role:"Designer",                  area:"design"},
-  {n:"Franklin", role:"Desenvolvedor",             area:"dev"},
-  {n:"Pedro",    role:"CS e Gestor de Tráfego",    area:"trafego"},
-  {n:"Guilherme",role:"Comercial",                 area:"comercial"},
-  {n:"Luiza",    role:"Redatora e Social Media",   area:"conteudo"}];
-const AREAS = {operacoes:"Operações",video:"Vídeo",design:"Design",dev:"Desenvolvimento",trafego:"Tráfego",cs:"Atendimento / CS",comercial:"Comercial",conteudo:"Conteúdo / Social"};
-const WIP = 6; // limite de tarefas em andamento por pessoa
-const PRI = {alta:"Alta",media:"Média",baixa:"Baixa"};
-const PRI_ORDER = {alta:0,media:1,baixa:2};
+  {n:"Carol",     role:"Coordenadora de Operações"},
+  {n:"João",      role:"Filmmaker"},
+  {n:"Jéssica",   role:"Designer"},
+  {n:"Franklin",  role:"Desenvolvedor"},
+  {n:"Pedro",     role:"CS e Gestor de Tráfego"},
+  {n:"Guilherme", role:"Comercial"},
+  {n:"Luiza",     role:"Redatora e Social Media"}];
+const COLS = [
+  ["fazer","A fazer","var(--muted)"],
+  ["andamento","Em andamento","var(--pink)"],
+  ["aguardando","Aguardando cliente","var(--warn)"],
+  ["feito","Concluído","var(--good)"]];
 
 /* ===== Estado e utilitários ===== */
-const S = {sb:null,clients:[],tasks:[],fClient:"",fWho:"",fArea:"",q:"",view:"board",readOnly:false,editTask:null};
+const S = {sb:null, me:null, email:"", clients:[], tasks:[], templates:[], fClient:"", fWho:"", q:"", route:{tab:"quadro"},
+  editTask:null, editItems:[], editTpl:null, tplItems:[]};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const slug = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+const initials = n => n ? String(n).normalize("NFD").replace(/[̀-ͯ]/g,"").slice(0,2).toUpperCase() : "–";
 const todayISO = () => {const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10)};
-const clientById = id => S.clients.find(c => c.id === id);
-const initials = n => (n||"?").normalize("NFD").replace(/[̀-ͯ]/g,"").slice(0,2).toUpperCase();
-const person = n => TEAM.find(p => p.n === n);
-const isLate = t => t.status !== "feito" && t.prazo && t.prazo < todayISO();
-try { const v = localStorage.getItem("ops-view"); if (v === "people" || v === "board") S.view = v } catch(_) {}
+const uid = () => Math.random().toString(36).slice(2,10);
+const clientName = id => S.clients.find(c=>c.id===id)?.name || "Interno LUZIAC";
+const person = n => TEAM.find(p=>p.n===n);
+const ddmm = iso => { if(!iso) return ""; const [,m,d]=iso.split("-"); return `${d}/${m}` };
+const av = (n,cls="") => `<span class="av ${cls} ${n?"":"none"}" title="${esc(n||"Sem responsável")}">${initials(n)}</span>`;
 
-/* linhas do banco (snake_case) -> objetos da tela */
-const fromRow = r => ({id:r.id,titulo:r.titulo,responsavel:r.responsavel,area:r.area,cliente:r.cliente||"",status:r.status||"fazer",
-  prioridade:r.prioridade||"media",prazo:r.prazo||"",notas:r.notas||"",criadoEm:r.criado_em,concluidoEm:r.concluido_em||""});
-const toRow = t => ({titulo:t.titulo,responsavel:t.responsavel,area:t.area,cliente:t.cliente||null,status:t.status,
-  prioridade:t.prioridade,prazo:t.prazo||null,notas:t.notas||null,concluido_em:t.concluidoEm||null});
+/* checklist: a tarefa fica com quem tem a próxima etapa pendente */
+const items = t => Array.isArray(t.checklist) ? t.checklist : [];
+const nextItem = t => items(t).find(i => !i.feito) || null;
+const holder = t => t.status==="feito" ? null : (nextItem(t)?.resp || t.responsavel || null);
+const progress = t => { const it=items(t); return {done:it.filter(i=>i.feito).length, total:it.length} };
+const dueOf = t => nextItem(t)?.prazo || t.prazo || "";
+const isLate = t => t.status!=="feito" && dueOf(t) && dueOf(t) < todayISO();
+const isToday = t => t.status!=="feito" && dueOf(t) === todayISO();
+/* tudo que envolve a pessoa e ainda está aberto: responsável da tarefa ou dono de alguma etapa pendente */
+const involves = (t,n) => t.status!=="feito" && (t.responsavel===n || items(t).some(i=>!i.feito && i.resp===n));
+
+const fromRow = r => ({id:r.id, titulo:r.titulo, responsavel:r.responsavel||"", cliente:r.cliente||"", status:r.status||"fazer",
+  prazo:r.prazo||"", notas:r.notas||"", checklist:Array.isArray(r.checklist)?r.checklist:[], criadoEm:r.criado_em,
+  concluidoEm:r.concluido_em||"", atualizadoEm:r.atualizado_em||r.criado_em});
+
+/* ===== Modo claro/escuro (igual aos painéis) ===== */
+(function(){ const root=document.documentElement, btn=$("mode-switch");
+  const apply=m=>{ if(m==="light") root.dataset.mode="light"; else delete root.dataset.mode; btn.setAttribute("aria-checked",m==="light"); btn.setAttribute("aria-label",m==="light"?"Modo escuro":"Modo claro") };
+  let saved=null; try{ saved=localStorage.getItem("dash-mode") }catch(e){}
+  apply(saved==="light"?"light":"dark");
+  btn.addEventListener("click",()=>{ const m=root.dataset.mode==="light"?"dark":"light"; apply(m); try{ localStorage.setItem("dash-mode",m) }catch(e){} });
+})();
+
+/* ===== Rotas: #quadro, #clientes, #cliente-<id>, #equipe, #pessoa-<nome>, #modelos ===== */
+function parseRoute(){
+  const h=(location.hash||"#quadro").slice(1);
+  if(h.startsWith("cliente-")) return {tab:"clientes", client:h.slice(8)};
+  if(h.startsWith("pessoa-")) return {tab:"equipe", person:TEAM.find(p=>slug(p.n)===h.slice(7))?.n};
+  if(["quadro","clientes","equipe","modelos"].includes(h)) return {tab:h};
+  return {tab:"quadro"};
+}
+window.addEventListener("hashchange",()=>{ S.route=parseRoute(); render(); window.scrollTo({top:0}) });
 
 /* ===== Render ===== */
-function fillSelects(){
-  const opts=[...S.clients].sort((a,b)=>a.name.localeCompare(b.name)).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
-  $("fClient").innerHTML='<option value="">Todos os clientes</option><option value="_interno">Interno LUZIAC</option>'+opts; $("fClient").value=S.fClient;
-  $("tCliente").innerHTML='<option value="">Interno LUZIAC</option>'+opts;
-  const area=Object.entries(AREAS).map(([k,l])=>`<option value="${k}">${l}</option>`).join("");
-  $("fArea").innerHTML='<option value="">Todas as áreas</option>'+area; $("fArea").value=S.fArea;
-  $("tArea").innerHTML=area;
-  const who=TEAM.map(p=>`<option>${p.n}</option>`).join("");
-  $("fWho").innerHTML='<option value="">Toda a equipe</option>'+who; $("fWho").value=S.fWho;
-  $("tResp").innerHTML=who;
-  $("tStatus").innerHTML=COLS.map(([k,l])=>`<option value="${k}">${l}</option>`).join("");
+function render(){
+  document.querySelectorAll("[data-tab]").forEach(a=>a.classList.toggle("active",a.dataset.tab===S.route.tab));
+  const home=S.route.tab==="quadro";
+  document.querySelector(".hero").hidden=!home;
+  renderHello(); renderForYou();
+  const r=S.route;
+  $("view").innerHTML = r.tab==="clientes" ? (r.client?viewClient(r.client):viewClients())
+    : r.tab==="equipe" ? (r.person?viewPerson(r.person):viewTeam())
+    : r.tab==="modelos" ? viewTemplates() : viewBoard();
+  bindView();
 }
-function renderTotals(){
-  const open=S.tasks.filter(t=>t.status!=="feito"), wk=Date.now()-7*864e5;
-  const done7=S.tasks.filter(t=>t.status==="feito"&&t.concluidoEm&&Date.parse(t.concluidoEm)>=wk).length;
-  const late=open.filter(isLate).length;
-  $("totals").innerHTML=`<span><b>${open.length}</b>em aberto</span><span class="${late?"bad":""}"><b>${late}</b>atrasadas</span><span><b>${open.filter(t=>t.status==="revisao").length}</b>em revisão</span><span><b>${open.filter(t=>t.status==="aguardando").length}</b>aguardando cliente</span><span><b>${done7}</b>entregues em 7 dias</span>`;
+
+function renderHello(){
+  const first=S.me||"";
+  const mine=S.tasks.filter(t=>holder(t)===S.me && t.status!=="aguardando").length;
+  $("hello").innerHTML = S.me
+    ? `Olá, ${esc(first)}<span class="grad">.</span> <span class="soft">${mine?`${mine} ${mine===1?"tarefa espera":"tarefas esperam"} por você.`:"Nada esperando por você."}</span>`
+    : `Olá<span class="grad">.</span>`;
+  $("meAv").textContent=initials(S.me); $("meName").textContent=S.me||"";
 }
-function personStats(n){
-  const mine=S.tasks.filter(t=>t.responsavel===n), open=mine.filter(t=>t.status!=="feito");
-  const wk=Date.now()-7*864e5, mo=Date.now()-30*864e5;
-  const done30=mine.filter(t=>t.status==="feito"&&t.concluidoEm&&Date.parse(t.concluidoEm)>=mo&&t.prazo);
-  const ontime=done30.filter(t=>t.concluidoEm.slice(0,10)<=t.prazo).length;
-  return {open:open.length,active:open.filter(t=>ACTIVE.has(t.status)).length,late:open.filter(isLate).length,
-    done7:mine.filter(t=>t.status==="feito"&&t.concluidoEm&&Date.parse(t.concluidoEm)>=wk).length,
-    ontimePct:done30.length?Math.round(ontime/done30.length*100):null,ontimeN:done30.length};
+
+/* avisos "Para você" */
+function renderForYou(){
+  if(!S.me){ $("foryou").innerHTML=""; return }
+  let lastSeen=""; try{ lastSeen=localStorage.getItem("ops-seen-"+slug(S.me))||"" }catch(_){}
+  const out=[], seen=new Set();
+  const push=(t,kind,k,s)=>{ if(seen.has(t.id)) return; seen.add(t.id); out.push({t,kind,k,s}) };
+  const mineOpen=S.tasks.filter(t=>involves(t,S.me));
+  mineOpen.filter(t=>holder(t)===S.me && isLate(t)).forEach(t=>push(t,"late","Atrasada",`${nextItem(t)?.texto||"Tarefa"} · era ${ddmm(dueOf(t))}`));
+  mineOpen.filter(t=>holder(t)===S.me && isToday(t)).forEach(t=>push(t,"today","Vence hoje",nextItem(t)?.texto||"Entrega hoje"));
+  mineOpen.filter(t=>holder(t)===S.me && t.status!=="aguardando" && lastSeen && t.atualizadoEm>lastSeen)
+    .forEach(t=>push(t,"new","Chegou para você",`${nextItem(t)?.texto||"Tarefa"}${prevStep(t)?` · depois de ${prevStep(t)}`:""}`));
+  mineOpen.filter(t=>holder(t)===S.me && t.status!=="aguardando")
+    .sort((a,b)=>(dueOf(a)||"9999").localeCompare(dueOf(b)||"9999"))
+    .forEach(t=>push(t,"","Esperando você",`${nextItem(t)?.texto||"Tarefa"}${dueOf(t)?` · até ${ddmm(dueOf(t))}`:""}`));
+  $("foryou").innerHTML = out.length
+    ? out.slice(0,8).map(o=>`<button type="button" class="fy ${o.kind}" data-task="${esc(o.t.id)}"><span class="k">${o.k}</span><span class="t">${esc(o.t.titulo)}</span><span class="s">${esc(clientName(o.t.cliente))} · ${esc(o.s)}</span></button>`).join("")
+    : `<div class="fy-empty">Tudo em dia por aqui.</div>`;
 }
-function personCard(p,asButton=true){
-  const s=personStats(p.n),pct=Math.min(100,s.active/WIP*100),lvl=s.active>WIP?"bad":s.active>=WIP-1?"warn":"";
-  const inner=`<span class="who"><span class="av">${initials(p.n)}</span><div><strong>${p.n}</strong><small>${p.role}</small></div></span>
-    <span class="load ${lvl}" title="${s.active} de ${WIP} em andamento"><i style="width:${Math.max(pct,s.active?6:0)}%"></i></span>
-    <span class="stats"><span><b>${s.open}</b>abertas</span><span><b>${s.active}</b>fazendo</span><span class="${s.late?"late":""}"><b>${s.late}</b>atrasadas</span><span><b>${s.done7}</b>entregues</span></span>
-    <span class="ontime">No prazo (30 dias): <b>${s.ontimePct==null?"—":s.ontimePct+"%"}</b>${s.ontimeN?` de ${s.ontimeN}`:""}</span>`;
-  return asButton?`<button type="button" class="tm ${S.fWho===p.n?"sel":""}" data-who="${esc(p.n)}">${inner}</button>`:`<div class="tm" style="cursor:default">${inner}</div>`;
+const prevStep = t => { const it=items(t), i=it.findIndex(x=>!x.feito); const p=i>0?it[i-1]:null; return p&&p.resp?`${p.resp}`:"" };
+function markSeen(){ if(!S.me) return; try{ localStorage.setItem("ops-seen-"+slug(S.me), new Date().toISOString()) }catch(_){} }
+
+/* cartão de tarefa */
+function tcard(t, drag=true){
+  const p=progress(t), h=holder(t), n=nextItem(t), due=dueOf(t);
+  const dueCls=isLate(t)?"late":isToday(t)?"today":"";
+  return `<div class="tcard" draggable="${drag}" data-task="${esc(t.id)}" tabindex="0" role="button" aria-label="Abrir ${esc(t.titulo)}">
+    <span class="ct">${esc(clientName(t.cliente))}</span>
+    <span class="tt">${esc(t.titulo)}</span>
+    ${p.total?`<span class="prog"><span class="bar"><i style="width:${p.done/p.total*100}%"></i></span>${p.done}/${p.total}</span>`:""}
+    ${t.status==="feito"?`<span class="tmeta"><span class="chip done">Concluída${t.concluidoEm?` · ${ddmm(t.concluidoEm.slice(0,10))}`:""}</span></span>`
+      :`<span class="with">${av(h,"sm")}<span>${h?`Com <b>${esc(h)}</b>`:"Sem responsável"}${n?` · ${esc(n.texto)}`:""}</span></span>`}
+    ${t.status!=="feito"&&(due||t.status==="aguardando")?`<span class="tmeta">${t.status==="aguardando"?`<span class="chip wait">Aguardando cliente</span>`:""}${due?`<span class="due ${dueCls}">${dueCls==="late"?"Atrasada · ":dueCls==="today"?"Hoje · ":""}${ddmm(due)}</span>`:""}</span>`:""}
+  </div>`;
 }
-const renderTeam=()=>{$("team").innerHTML=TEAM.map(p=>personCard(p)).join("")};
-function visibleTasks(){
+
+function filtered(){
   const q=S.q.trim().toLowerCase();
-  return S.tasks.filter(t=>(!S.fClient||(S.fClient==="_interno"?!t.cliente:t.cliente===S.fClient))&&(!S.fWho||t.responsavel===S.fWho)&&(!S.fArea||t.area===S.fArea)&&
-    (!q||(t.titulo||"").toLowerCase().includes(q)||(t.notas||"").toLowerCase().includes(q)||(clientById(t.cliente)?.name||"").toLowerCase().includes(q)));
+  return S.tasks.filter(t=>(!S.fClient||t.cliente===S.fClient)&&(!S.fWho||involves(t,S.fWho)||(t.status==="feito"&&t.responsavel===S.fWho))&&
+    (!q||t.titulo.toLowerCase().includes(q)||clientName(t.cliente).toLowerCase().includes(q)||items(t).some(i=>(i.texto||"").toLowerCase().includes(q))));
 }
-const sortOpen=(a,b)=>(PRI_ORDER[a.prioridade]??1)-(PRI_ORDER[b.prioridade]??1)||(a.prazo||"9999").localeCompare(b.prazo||"9999");
-function cardHTML(t,showStage=false){
-  const c=clientById(t.cliente),t0=todayISO();let due="";
-  if(t.prazo){const [,m,d]=t.prazo.split("-");const cls=isLate(t)?"late":t.status!=="feito"&&t.prazo===t0?"today":"";due=`<span class="due ${cls}">${cls==="late"?"atrasada · ":cls==="today"?"hoje · ":""}${d}/${m}</span>`}
-  const stage=showStage?`<span>${COLS.find(([k])=>k===t.status)?.[1]||""}</span>`:"";
-  return `<div class="card" draggable="${!S.readOnly&&!showStage}" data-task="${esc(t.id)}" tabindex="0" role="button" aria-label="Abrir tarefa ${esc(t.titulo)}">
-    <span class="top"><span class="cl">${c?esc(c.name):"Interno LUZIAC"}</span><span class="ar">${esc(AREAS[t.area]||"")}</span></span>
-    <span class="t">${esc(t.titulo)}</span>
-    <span class="meta"><span class="pill ${t.prioridade||"media"}">${PRI[t.prioridade]||"Média"}</span>${stage}${due}<span class="av" title="${esc(t.responsavel)}">${initials(t.responsavel)}</span></span></div>`;
-}
-function renderBoard(){
-  const vis=visibleTasks();
-  return `<div class="board-scroll"><div class="board">${COLS.map(([k,l])=>{
-    let items=vis.filter(t=>t.status===k),total=items.length;
-    if(k==="feito")items=items.sort((a,b)=>(b.concluidoEm||"").localeCompare(a.concluidoEm||"")).slice(0,30); else items.sort(sortOpen);
-    return `<div class="col" data-col="${k}"><div class="col-h"><span>${l}</span><i>${total}</i></div>
-      ${items.map(t=>cardHTML(t)).join("")||'<div class="empty">Nada aqui.</div>'}
-      ${S.readOnly||k==="feito"?"":`<button type="button" class="add" data-addto="${k}">+ adicionar</button>`}</div>`;
+const sortOpen=(a,b)=>Number(isLate(b))-Number(isLate(a))||(dueOf(a)||"9999").localeCompare(dueOf(b)||"9999");
+
+function boardHTML(list, addPreset={}){
+  return `<div class="board-scroll"><div class="board">${COLS.map(([k,l,c])=>{
+    let col=list.filter(t=>t.status===k);
+    const total=col.length;
+    col = k==="feito" ? col.sort((a,b)=>(b.concluidoEm||"").localeCompare(a.concluidoEm||"")).slice(0,25) : col.sort(sortOpen);
+    return `<div class="col" data-col="${k}"><div class="col-h"><span><i style="background:${c}"></i>${l}</span><b>${total}</b></div>
+      ${col.map(t=>tcard(t)).join("")||'<div class="empty">Nada aqui.</div>'}
+      ${k!=="feito"?`<button type="button" class="add" data-add='${esc(JSON.stringify({...addPreset,status:k}))}'>+ adicionar</button>`:""}</div>`;
   }).join("")}</div></div>`;
 }
-function renderPeople(){
-  const vis=visibleTasks().filter(t=>t.status!=="feito"), people=S.fWho?TEAM.filter(p=>p.n===S.fWho):TEAM;
-  return `<div class="lanes">${people.map(p=>{
-    const items=vis.filter(t=>t.responsavel===p.n).sort((a,b)=>Number(isLate(b))-Number(isLate(a))||sortOpen(a,b));
-    return `<div class="lane">${personCard(p,false)}<div class="lane-items">${items.map(t=>cardHTML(t,true)).join("")||'<div class="empty">Sem tarefas abertas.</div>'}${S.readOnly?"":`<button type="button" class="add" data-addfor="${esc(p.n)}">+ tarefa para ${esc(p.n)}</button>`}</div></div>`;
+
+function clientOptions(sel, withAll){
+  const o=[...S.clients].sort((a,b)=>a.name.localeCompare(b.name,"pt")).map(c=>`<option value="${esc(c.id)}" ${c.id===sel?"selected":""}>${esc(c.name)}</option>`).join("");
+  return (withAll?`<option value="">Todos os clientes</option>`:`<option value="">Interno LUZIAC</option>`)+o;
+}
+const teamOptions=(sel,empty="Sem responsável")=>`<option value="">${empty}</option>`+TEAM.map(p=>`<option ${p.n===sel?"selected":""}>${p.n}</option>`).join("");
+
+function viewBoard(){
+  return `<div class="filters">
+      <input class="search" id="q" type="search" placeholder="Buscar tarefa ou etapa…" value="${esc(S.q)}" aria-label="Buscar">
+      <select class="pill-select" id="fClient" aria-label="Cliente">${clientOptions(S.fClient,true)}</select>
+      <select class="pill-select" id="fWho" aria-label="Pessoa">${teamOptions(S.fWho,"Toda a equipe")}</select>
+      ${S.fClient||S.fWho||S.q?`<button class="chipx" id="clear" type="button">Limpar filtros ✕</button>`:""}
+    </div>${boardHTML(filtered())}`;
+}
+
+function viewClients(){
+  const list=[...S.clients].sort((a,b)=>a.name.localeCompare(b.name,"pt")).map(c=>{
+    const open=S.tasks.filter(t=>t.cliente===c.id&&t.status!=="feito");
+    const late=open.filter(isLate).length, wait=open.filter(t=>t.status==="aguardando").length;
+    const holders=[...new Set(open.map(holder).filter(Boolean))];
+    return `<a class="gcard" href="#cliente-${esc(c.id)}"><span class="gn">${esc(c.name)}</span>
+      <span class="nums"><div><b>${open.length}</b><small>abertas</small></div><div class="${wait?"warn":""}"><b>${wait}</b><small>com cliente</small></div><div class="${late?"bad":""}"><b>${late}</b><small>atrasadas</small></div></span>
+      <span class="avs">${holders.slice(0,6).map(n=>av(n,"sm")).join("")||'<span class="gs">Nenhuma tarefa aberta</span>'}</span></a>`;
+  }).join("");
+  return `<div class="sec-h"><h2 class="sec-title">Clientes</h2><button class="btn" id="newClient" type="button">+ cliente</button></div><div class="grid">${list}</div>`;
+}
+
+function viewClient(id){
+  const c=S.clients.find(x=>x.id===id);
+  if(!c) return `<a class="link-btn back" href="#clientes">← Clientes</a><p class="muted">Cliente não encontrado.</p>`;
+  const list=S.tasks.filter(t=>t.cliente===id);
+  return `<a class="link-btn back" href="#clientes">← Clientes</a>
+    <div class="page-head"><div><span class="label">Cliente</span><h2 class="sec-title" style="font-size:32px">${esc(c.name)}</h2></div>
+    <button class="btn primary" type="button" data-add='${esc(JSON.stringify({cliente:id}))}'>+ tarefa para ${esc(c.name)}</button></div>
+    ${boardHTML(list,{cliente:id})}`;
+}
+
+function viewTeam(){
+  const wk=Date.now()-7*864e5;
+  return `<div class="sec-h"><h2 class="sec-title">Equipe</h2></div><div class="grid">${TEAM.map(p=>{
+    const mine=S.tasks.filter(t=>involves(t,p.n));
+    const waiting=S.tasks.filter(t=>holder(t)===p.n&&t.status!=="aguardando").length;
+    const late=S.tasks.filter(t=>holder(t)===p.n&&isLate(t)).length;
+    const done=S.tasks.reduce((s,t)=>s+items(t).filter(i=>i.feito&&i.resp===p.n&&i.feitoEm&&Date.parse(i.feitoEm)>=wk).length,0);
+    return `<a class="gcard" href="#pessoa-${slug(p.n)}"><span class="who" style="display:flex;gap:10px;align-items:center">${av(p.n,"lg")}<span><span class="gn">${p.n}</span><br><span class="gs">${p.role}</span></span></span>
+      <span class="nums"><div><b>${waiting}</b><small>com ela/ele</small></div><div class="${late?"bad":""}"><b>${late}</b><small>atrasadas</small></div><div><b>${mine.length}</b><small>envolvida(o)</small></div><div><b>${done}</b><small>etapas na semana</small></div></span></a>`;
   }).join("")}</div>`;
 }
-function renderView(){
-  $("view").innerHTML=S.view==="people"?renderPeople():renderBoard();
-  document.querySelectorAll("[data-view]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.view===S.view)));
-  $("clear").hidden=!(S.fClient||S.fWho||S.fArea||S.q);
-}
-function renderAll(){fillSelects();renderTotals();renderTeam();renderView()}
 
-/* ===== Dados (Supabase) ===== */
+function viewPerson(n){
+  const p=person(n);
+  if(!p) return `<a class="link-btn back" href="#equipe">← Equipe</a><p class="muted">Pessoa não encontrada.</p>`;
+  const mine=S.tasks.filter(t=>involves(t,n)).sort(sortOpen);
+  const byClient={};
+  mine.forEach(t=>{ (byClient[t.cliente||""]??=[]).push(t) });
+  const groups=Object.keys(byClient).sort((a,b)=>clientName(a).localeCompare(clientName(b),"pt"));
+  const rows=groups.map(cid=>`<div class="group"><div class="group-h"><span class="gname">${esc(clientName(cid))}</span><span class="gcount">${byClient[cid].length}</span></div><div class="rows">${
+    byClient[cid].map(t=>{
+      const h=holder(t), nx=nextItem(t);
+      const steps=items(t).filter(i=>i.resp===n&&!i.feito);
+      const stepsHTML=steps.map(i=>{
+        const isNext=nx&&nx.id===i.id;
+        return `<label class="step-check ${isNext?"next":"later"}" data-stop><input type="checkbox" data-check="${esc(t.id)}|${esc(i.id)}" ${isNext?"":"disabled"}>${esc(i.texto)}${i.prazo?` <span class="when">até ${ddmm(i.prazo)}</span>`:""}${isNext?"":` <span class="when">· depois</span>`}</label>`;
+      }).join("") || `<span class="sub">Responsável pela tarefa</span>`;
+      const due=dueOf(t), dc=isLate(t)?"late":isToday(t)?"today":"";
+      return `<div class="trow" data-task="${esc(t.id)}"><div><div class="tt">${esc(t.titulo)}</div><div class="sub">${COLS.find(c=>c[0]===t.status)?.[1]||""} · ${progress(t).done}/${progress(t).total} etapas${due?` · <span class="due ${dc}">${ddmm(due)}</span>`:""}</div></div>
+        <div class="mysteps">${stepsHTML}</div>
+        <div class="with">${av(h,"sm")}<span>${h===n?"<b>Com você agora</b>":h?`Com ${esc(h)}`:"—"}</span></div></div>`;
+    }).join("")}</div></div>`).join("");
+  return `<a class="link-btn back" href="#equipe">← Equipe</a>
+    <div class="page-head"><div class="who">${av(n,"lg")}<div><span class="label">${esc(p.role)}</span><h2 class="sec-title" style="font-size:32px">${esc(n)}</h2></div></div>
+    <button class="btn primary" type="button" data-add='${esc(JSON.stringify({responsavel:n}))}'>+ tarefa para ${esc(n)}</button></div>
+    ${rows||`<p class="muted">Nada aberto com ${esc(n)} agora.</p>`}`;
+}
+
+function viewTemplates(){
+  return `<div class="sec-h"><div><h2 class="sec-title">Modelos de tarefa</h2><p class="muted" style="margin:4px 0 0">Ao criar uma tarefa a partir de um modelo, o checklist já vem pronto.</p></div><button class="btn" id="newTpl" type="button">+ modelo</button></div>
+    <div class="grid">${S.templates.map(t=>`<button type="button" class="gcard" data-tpl="${esc(t.id)}"><span class="gn">${esc(t.nome)}</span>
+      <ol class="tpl-steps">${(t.itens||[]).map(i=>`<li>${esc(i.texto)}${i.resp?` <span>· ${esc(i.resp)}</span>`:""}</li>`).join("")}</ol></button>`).join("")||'<p class="muted">Nenhum modelo ainda.</p>'}</div>`;
+}
+
+/* ===== Eventos da área principal ===== */
+function bindView(){
+  const q=$("q"); if(q) q.oninput=e=>{ S.q=e.target.value; const pos=e.target.selectionStart; render(); const n=$("q"); n.focus(); try{n.setSelectionRange(pos,pos)}catch(_){} };
+  const fc=$("fClient"); if(fc) fc.onchange=e=>{ S.fClient=e.target.value; render() };
+  const fw=$("fWho"); if(fw) fw.onchange=e=>{ S.fWho=e.target.value; render() };
+  const cl=$("clear"); if(cl) cl.onclick=()=>{ S.fClient=""; S.fWho=""; S.q=""; render() };
+  const nc=$("newClient"); if(nc) nc.onclick=()=>{ $("cNome").value=""; $("dClient").showModal() };
+  const nt=$("newTpl"); if(nt) nt.onclick=()=>openTpl(null);
+}
+document.addEventListener("click",e=>{
+  if(e.target.closest("[data-close]")){ e.target.closest("dialog").close(); return }
+  if(e.target.closest("[data-stop]")) return;
+  const add=e.target.closest("[data-add]"); if(add){ openTask(null, JSON.parse(add.dataset.add)); return }
+  const tp=e.target.closest("[data-tpl]"); if(tp){ openTpl(S.templates.find(x=>x.id===tp.dataset.tpl)); return }
+  const tk=e.target.closest("[data-task]"); if(tk && !e.target.closest("dialog")){ openTask(S.tasks.find(t=>t.id===tk.dataset.task)); return }
+});
+document.addEventListener("keydown",e=>{ if(e.key==="Enter"){ const tk=e.target.closest?.(".tcard"); if(tk) openTask(S.tasks.find(t=>t.id===tk.dataset.task)) } });
+document.addEventListener("change",async e=>{
+  const c=e.target.closest?.("[data-check]"); if(!c) return;
+  const [tid,iid]=c.dataset.check.split("|"); c.disabled=true;
+  await toggleItem(tid,iid,c.checked);
+});
+
+/* arrastar entre etapas */
+let dragId=null;
+document.addEventListener("dragstart",e=>{ const c=e.target.closest?.(".tcard"); if(!c) return; dragId=c.dataset.task; c.classList.add("dragging"); e.dataTransfer.effectAllowed="move"; try{e.dataTransfer.setData("text/plain",dragId)}catch(_){} });
+document.addEventListener("dragend",e=>{ e.target.closest?.(".tcard")?.classList.remove("dragging"); document.querySelectorAll(".col.over").forEach(x=>x.classList.remove("over")); dragId=null });
+document.addEventListener("dragover",e=>{ const col=e.target.closest?.(".col"); if(!col||!dragId) return; e.preventDefault(); document.querySelectorAll(".col.over").forEach(x=>x!==col&&x.classList.remove("over")); col.classList.add("over") });
+document.addEventListener("drop",e=>{ const col=e.target.closest?.(".col"); if(!col||!dragId) return; e.preventDefault(); col.classList.remove("over"); setStatus(dragId,col.dataset.col); dragId=null });
+
+/* ===== Dados ===== */
 async function loadAll(){
-  const [c,t]=await Promise.all([S.sb.from("clients").select("id,name").order("name"),S.sb.from("tasks").select("*")]);
-  if(c.error||t.error){$("sync").textContent="Sem conexão com os dados";return}
-  S.clients=c.data; S.tasks=t.data.map(fromRow);
-  $("sync").textContent="Sincronizado ao vivo"; renderAll();
+  const [c,t,m]=await Promise.all([
+    S.sb.from("clients").select("id,name"),
+    S.sb.from("tasks").select("*"),
+    S.sb.from("templates").select("*").order("nome")]);
+  if(c.error||t.error){ $("sync").textContent="sem conexão com os dados"; return }
+  S.clients=c.data; S.tasks=t.data.map(fromRow); S.templates=m.error?[]:m.data;
+  $("sync").textContent="sincronizado ao vivo"; render();
 }
-let reloadTimer=null;
-const scheduleReload=()=>{clearTimeout(reloadTimer);reloadTimer=setTimeout(loadAll,250)};
+let reloadT=null;
+const reloadSoon=()=>{ clearTimeout(reloadT); reloadT=setTimeout(loadAll,300) };
 function subscribe(){
-  S.sb.channel("ops").on("postgres_changes",{event:"*",schema:"public",table:"tasks"},scheduleReload)
-    .on("postgres_changes",{event:"*",schema:"public",table:"clients"},scheduleReload).subscribe();
+  S.sb.channel("ops")
+    .on("postgres_changes",{event:"*",schema:"public",table:"tasks"},reloadSoon)
+    .on("postgres_changes",{event:"*",schema:"public",table:"clients"},reloadSoon)
+    .on("postgres_changes",{event:"*",schema:"public",table:"templates"},reloadSoon).subscribe();
 }
-async function upsertTask(id,body){
-  const row=toRow(body);
-  const r=id?await S.sb.from("tasks").update(row).eq("id",id):await S.sb.from("tasks").insert(row);
-  if(r.error)throw r.error; await loadAll();
+/* etapa automática pelo checklist */
+function autoStatus(status, list){
+  if(!list.length) return status;
+  const done=list.filter(i=>i.feito).length;
+  if(done===list.length) return "feito";
+  if(status==="feito") return "andamento";
+  if(done>0 && status==="fazer") return "andamento";
+  return status;
+}
+async function saveRow(id,row){
+  const r = id ? await S.sb.from("tasks").update(row).eq("id",id) : await S.sb.from("tasks").insert(row);
+  if(r.error) throw r.error;
+}
+async function setStatus(id,status){
+  const t=S.tasks.find(x=>x.id===id); if(!t||t.status===status) return;
+  t.status=status; t.concluidoEm=status==="feito"?new Date().toISOString():""; render();
+  try{ await saveRow(id,{status,concluido_em:t.concluidoEm||null}) }catch(_){ loadAll() }
+}
+async function toggleItem(tid,iid,on){
+  const t=S.tasks.find(x=>x.id===tid); if(!t) return;
+  const list=items(t).map(i=>i.id===iid?{...i,feito:on,feitoEm:on?new Date().toISOString():""}:i);
+  const status=autoStatus(t.status,list);
+  const concl=status==="feito"?(t.concluidoEm||new Date().toISOString()):"";
+  Object.assign(t,{checklist:list,status,concluidoEm:concl}); render();
+  try{ await saveRow(tid,{checklist:list,status,concluido_em:concl||null}) }catch(_){ loadAll() }
 }
 
 /* ===== Modal de tarefa ===== */
-function openTask(t,preset={}){
+function openTask(t, preset={}){
   S.editTask=t?t.id:null;
-  $("dTaskTitle").textContent=t?"Editar tarefa":"Nova tarefa";
-  const resp=t?.responsavel||preset.responsavel||S.fWho||"Carol";
-  $("tTitulo").value=t?.titulo||""; $("tResp").value=resp;
-  $("tArea").value=t?.area||S.fArea||person(resp)?.area||"operacoes";
-  $("tCliente").value=t?.cliente??(S.fClient&&S.fClient!=="_interno"?S.fClient:"");
-  $("tStatus").value=t?.status||preset.status||"fazer";
-  $("tPrior").value=t?.prioridade||"media"; $("tPrazo").value=t?.prazo||""; $("tNotas").value=t?.notas||"";
+  S.editItems=t?items(t).map(i=>({...i})):[];
+  $("dTaskTitle").textContent=t?"Tarefa":"Nova tarefa";
+  $("tplRow").hidden=!!t;
+  $("tTpl").innerHTML=`<option value="">Tarefa em branco</option>`+S.templates.map(m=>`<option value="${esc(m.id)}">${esc(m.nome)}</option>`).join("");
+  $("tTitulo").value=t?.titulo||"";
+  $("tCliente").innerHTML=clientOptions(t?.cliente??preset.cliente??(S.fClient||""),false);
+  $("tResp").innerHTML=teamOptions(t?.responsavel??preset.responsavel??"");
+  $("tPrazo").value=t?.prazo||"";
+  $("tStatus").innerHTML=COLS.map(([k,l])=>`<option value="${k}" ${k===(t?.status||preset.status||"fazer")?"selected":""}>${l}</option>`).join("");
+  $("tNotas").value=t?.notas||"";
   $("tDel").hidden=!t; $("tConfirm").hidden=true; $("tErr").hidden=true;
+  drawItems();
   $("dTask").showModal();
+  if(!t) setTimeout(()=>$("tTitulo").focus(),30);
 }
-$("tResp").onchange=e=>{if(!S.editTask){const a=person(e.target.value)?.area;if(a)$("tArea").value=a}};
+function drawItems(){
+  const nx=S.editItems.find(i=>!i.feito);
+  $("tItems").innerHTML=S.editItems.map((i,ix)=>`<li class="${i.feito?"done":""} ${nx&&nx.id===i.id?"cur":""}" data-ix="${ix}">
+    <input type="checkbox" data-f="feito" ${i.feito?"checked":""} aria-label="Concluída">
+    <input type="text" class="txt" data-f="texto" value="${esc(i.texto)}" placeholder="Etapa" maxlength="120" aria-label="Etapa">
+    <select data-f="resp" aria-label="Responsável pela etapa">${teamOptions(i.resp||"","Quem?")}</select>
+    <input type="date" data-f="prazo" value="${esc(i.prazo||"")}" aria-label="Prazo da etapa">
+    <span class="mini"><button type="button" data-mv="-1" aria-label="Subir">↑</button><button type="button" data-mv="1" aria-label="Descer">↓</button><button type="button" data-rm aria-label="Remover">×</button></span></li>`).join("")
+    || `<li style="display:block" class="muted">Nenhuma etapa. Use um modelo ou adicione abaixo.</li>`;
+}
+function itemsEditor(listEl, getArr, redraw){
+  listEl.addEventListener("input",e=>{ const li=e.target.closest("li[data-ix]"); if(!li) return; const it=getArr()[+li.dataset.ix], f=e.target.dataset.f; if(!f) return;
+    if(f==="feito"){ it.feito=e.target.checked; it.feitoEm=it.feito?new Date().toISOString():""; redraw() } else it[f]=e.target.value });
+  listEl.addEventListener("change",e=>{ if(e.target.dataset.f==="feito") return; const li=e.target.closest("li[data-ix]"); if(li){ const f=e.target.dataset.f; if(f) getArr()[+li.dataset.ix][f]=e.target.value } });
+  listEl.addEventListener("click",e=>{ const li=e.target.closest("li[data-ix]"); if(!li) return; const ix=+li.dataset.ix, arr=getArr();
+    if(e.target.closest("[data-rm]")){ arr.splice(ix,1); redraw() }
+    const mv=e.target.closest("[data-mv]"); if(mv){ const j=ix+ +mv.dataset.mv; if(j>=0&&j<arr.length){ [arr[ix],arr[j]]=[arr[j],arr[ix]]; redraw() } } });
+}
+itemsEditor($("tItems"),()=>S.editItems,drawItems);
+$("tAddItem").onclick=()=>{ S.editItems.push({id:uid(),texto:"",resp:"",prazo:"",feito:false}); drawItems(); $("tItems").querySelector("li:last-child .txt")?.focus() };
+$("tTpl").onchange=e=>{ const m=S.templates.find(x=>x.id===e.target.value);
+  S.editItems=m?(m.itens||[]).map(i=>({id:uid(),texto:i.texto,resp:i.resp||"",prazo:"",feito:false})):[];
+  if(m && !$("tTitulo").value.trim()) $("tTitulo").value=m.nome+" · ";
+  drawItems() };
 $("fTask").onsubmit=async e=>{
   e.preventDefault();
-  const status=$("tStatus").value,prev=S.editTask?S.tasks.find(t=>t.id===S.editTask):null;
-  const body={titulo:$("tTitulo").value.trim(),responsavel:$("tResp").value,area:$("tArea").value,cliente:$("tCliente").value,status,
-    prioridade:$("tPrior").value,prazo:$("tPrazo").value,notas:$("tNotas").value.trim(),
-    concluidoEm:status==="feito"?(prev?.status==="feito"&&prev.concluidoEm?prev.concluidoEm:new Date().toISOString()):""};
-  if(!body.titulo)return;
-  try{await upsertTask(prev?prev.id:null,body);$("dTask").close()}catch(err){showErr(err)}
+  const prev=S.editTask?S.tasks.find(t=>t.id===S.editTask):null;
+  const list=S.editItems.filter(i=>i.texto.trim()).map(i=>({...i,texto:i.texto.trim()}));
+  let status=$("tStatus").value;
+  if(!prev || status===prev.status) status=autoStatus(status,list);
+  const concl=status==="feito"?(prev?.status==="feito"&&prev.concluidoEm?prev.concluidoEm:new Date().toISOString()):"";
+  const row={titulo:$("tTitulo").value.trim(),cliente:$("tCliente").value||null,responsavel:$("tResp").value||null,prazo:$("tPrazo").value||null,
+    status,notas:$("tNotas").value.trim()||null,checklist:list,concluido_em:concl||null};
+  if(!row.titulo) return;
+  try{ await saveRow(prev?.id,row); $("dTask").close(); loadAll() }
+  catch(err){ $("tErr").hidden=false; $("tErr").textContent="Não deu para salvar. Confira a conexão e tente de novo." }
 };
-function showErr(){const el=$("tErr");el.hidden=false;el.textContent="Não deu para salvar agora. Confira a conexão e tente de novo."}
-async function moveTask(id,status){
-  const t=S.tasks.find(x=>x.id===id); if(!t||t.status===status)return;
-  t.status=status; t.concluidoEm=status==="feito"?new Date().toISOString():""; renderAll();
-  const r=await S.sb.from("tasks").update({status,concluido_em:t.concluidoEm||null}).eq("id",id);
-  if(r.error)loadAll();
+$("tDel").onclick=()=>{ $("tConfirm").hidden=false };
+$("tDelNo").onclick=()=>{ $("tConfirm").hidden=true };
+$("tDelYes").onclick=async()=>{ const r=await S.sb.from("tasks").delete().eq("id",S.editTask); if(r.error){ $("tErr").hidden=false; $("tErr").textContent="Não deu para excluir agora."; return } $("dTask").close(); loadAll() };
+
+/* ===== Modelos ===== */
+function openTpl(m){
+  S.editTpl=m?m.id:null; S.tplItems=m?(m.itens||[]).map(i=>({...i})):[{texto:"",resp:""}];
+  $("dTplTitle").textContent=m?"Editar modelo":"Novo modelo"; $("mNome").value=m?.nome||"";
+  $("mDel").hidden=!m; $("mConfirm").hidden=true; drawTpl(); $("dTpl").showModal();
 }
-$("tDel").onclick=()=>{$("tConfirm").hidden=false};
-$("tDelNo").onclick=()=>{$("tConfirm").hidden=true};
-$("tDelYes").onclick=async()=>{const r=await S.sb.from("tasks").delete().eq("id",S.editTask);if(r.error)return showErr();$("dTask").close();loadAll()};
+function drawTpl(){
+  $("mItems").classList.add("tpl");
+  $("mItems").innerHTML=S.tplItems.map((i,ix)=>`<li data-ix="${ix}"><span class="num">${ix+1}</span>
+    <input type="text" data-f="texto" value="${esc(i.texto)}" placeholder="Etapa" maxlength="120" aria-label="Etapa">
+    <select data-f="resp" aria-label="Responsável padrão">${teamOptions(i.resp||"","Definir na tarefa")}</select>
+    <span class="mini"><button type="button" data-mv="-1" aria-label="Subir">↑</button><button type="button" data-mv="1" aria-label="Descer">↓</button><button type="button" data-rm aria-label="Remover">×</button></span></li>`).join("");
+}
+itemsEditor($("mItems"),()=>S.tplItems,drawTpl);
+$("mAddItem").onclick=()=>{ S.tplItems.push({texto:"",resp:""}); drawTpl(); $("mItems").querySelector("li:last-child input")?.focus() };
+$("fTpl").onsubmit=async e=>{
+  e.preventDefault();
+  const row={nome:$("mNome").value.trim(),itens:S.tplItems.filter(i=>i.texto.trim()).map(i=>({texto:i.texto.trim(),resp:i.resp||""}))};
+  if(!row.nome) return;
+  const r=S.editTpl?await S.sb.from("templates").update(row).eq("id",S.editTpl):await S.sb.from("templates").insert(row);
+  if(!r.error){ $("dTpl").close(); loadAll() }
+};
+$("mDel").onclick=()=>{ $("mConfirm").hidden=false };
+$("mDelNo").onclick=()=>{ $("mConfirm").hidden=true };
+$("mDelYes").onclick=async()=>{ await S.sb.from("templates").delete().eq("id",S.editTpl); $("dTpl").close(); loadAll() };
 
-/* ===== Eventos ===== */
-document.addEventListener("click",e=>{
-  const c=e.target.closest("[data-close]");if(c){c.closest("dialog").close();return}
-  const v=e.target.closest("[data-view]");if(v){S.view=v.dataset.view;try{localStorage.setItem("ops-view",S.view)}catch(_){}renderView();return}
-  const tm=e.target.closest("[data-who]");if(tm){S.fWho=S.fWho===tm.dataset.who?"":tm.dataset.who;renderAll();return}
-  const add=e.target.closest("[data-addto]");if(add){openTask(null,{status:add.dataset.addto});return}
-  const af=e.target.closest("[data-addfor]");if(af){openTask(null,{responsavel:af.dataset.addfor});return}
-  const card=e.target.closest("[data-task]");if(card){openTask(S.tasks.find(t=>t.id===card.dataset.task));return}
-});
-document.addEventListener("keydown",e=>{if(e.key==="Enter"){const card=e.target.closest?.("[data-task]");if(card)openTask(S.tasks.find(t=>t.id===card.dataset.task))}});
-$("newTask").onclick=()=>openTask(null);
-$("fClient").onchange=e=>{S.fClient=e.target.value;renderView()};
-$("fArea").onchange=e=>{S.fArea=e.target.value;renderView()};
-$("fWho").onchange=e=>{S.fWho=e.target.value;renderAll()};
-$("q").oninput=e=>{S.q=e.target.value;renderView()};
-$("clear").onclick=()=>{S.fClient="";S.fWho="";S.fArea="";S.q="";$("q").value="";renderAll()};
+/* ===== Clientes ===== */
+$("fClient").onsubmit=async e=>{
+  e.preventDefault(); const name=$("cNome").value.trim(); if(!name) return;
+  let id=slug(name)||"cliente"; if(S.clients.some(c=>c.id===id)) id+="-"+uid().slice(0,4);
+  const r=await S.sb.from("clients").insert({id,name}); if(!r.error){ $("dClient").close(); loadAll() }
+};
 
-let dragId=null;
-document.addEventListener("dragstart",e=>{const c=e.target.closest?.("[data-task]");if(!c||c.getAttribute("draggable")!=="true")return;dragId=c.dataset.task;c.classList.add("dragging");e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",dragId)}catch(_){}});
-document.addEventListener("dragend",e=>{e.target.closest?.("[data-task]")?.classList.remove("dragging");document.querySelectorAll(".col.over").forEach(x=>x.classList.remove("over"));dragId=null});
-document.addEventListener("dragover",e=>{const col=e.target.closest?.(".col");if(!col||!dragId)return;e.preventDefault();document.querySelectorAll(".col.over").forEach(x=>x!==col&&x.classList.remove("over"));col.classList.add("over")});
-document.addEventListener("drop",e=>{const col=e.target.closest?.(".col");if(!col||!dragId)return;e.preventDefault();col.classList.remove("over");moveTask(dragId,col.dataset.col);dragId=null});
+/* ===== Login e identidade ===== */
+function askWho(){
+  $("whoGrid").innerHTML=TEAM.map(p=>`<button type="button" data-who="${esc(p.n)}">${av(p.n)}<span><b>${p.n}</b><small>${p.role}</small></span></button>`).join("");
+  $("dWho").showModal();
+}
+$("whoGrid").onclick=async e=>{ const b=e.target.closest("[data-who]"); if(!b) return;
+  S.me=b.dataset.who; await S.sb.auth.updateUser({data:{nome:S.me}}); $("dWho").close(); render() };
+$("dWho").addEventListener("cancel",e=>e.preventDefault());
+$("meBtn").onclick=()=>{ $("dMeTitle").textContent=S.me||"Sua conta"; $("dMeEmail").textContent=S.email; $("dMe").showModal() };
+$("changeWho").onclick=()=>{ $("dMe").close(); askWho() };
+$("logout").onclick=async()=>{ await S.sb.auth.signOut(); location.hash=""; location.reload() };
+$("newTask").onclick=()=>openTask(null, S.route.client?{cliente:S.route.client}:S.route.person?{responsavel:S.route.person}:{});
 
-/* ===== Login ===== */
-function showApp(session){
-  $("login").hidden=!!session; $("app").hidden=!session;
-  if(session){$("me").textContent=session.user.email;fillSelects();renderAll();loadAll();subscribe()}
+function start(session){
+  $("login").hidden=true; $("app").hidden=false;
+  S.email=session.user.email||"";
+  S.me=person(session.user.user_metadata?.nome)?.n||null;
+  S.route=parseRoute(); render(); loadAll().then(()=>{ if(!S.me) askWho() }); subscribe();
+  window.addEventListener("beforeunload",markSeen);
+  document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") markSeen() });
 }
 $("fLogin").onsubmit=async e=>{
   e.preventDefault(); $("lErr").hidden=true; $("lBtn").disabled=true;
   const {error}=await S.sb.auth.signInWithPassword({email:$("lEmail").value.trim(),password:$("lPass").value});
   $("lBtn").disabled=false;
-  if(error){$("lErr").hidden=false;$("lErr").textContent="E-mail ou senha incorretos."}
+  if(error){ $("lErr").hidden=false; $("lErr").textContent="E-mail ou senha incorretos." }
 };
-$("logout").onclick=async()=>{await S.sb.auth.signOut();location.reload()};
 
 (async()=>{
   const cfg=window.OPS_CONFIG||{};
-  if(!cfg.supabaseUrl||!cfg.supabaseAnonKey||!window.supabase){
-    $("login").hidden=false;$("lErr").hidden=false;$("lErr").textContent="Sistema ainda não configurado (config.js).";return}
+  if(!cfg.supabaseUrl||!cfg.supabaseAnonKey||!window.supabase){ $("login").hidden=false; $("lErr").hidden=false; $("lErr").textContent="Sistema ainda não configurado."; return }
   S.sb=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey);
-  const {data}=await S.sb.auth.getSession(); let shown=!!data.session; showApp(data.session);
-  S.sb.auth.onAuthStateChange((_ev,session)=>{if(session&&!shown){shown=true;showApp(session)}});
+  const {data}=await S.sb.auth.getSession();
+  let started=false;
+  if(data.session){ started=true; start(data.session) } else $("login").hidden=false;
+  S.sb.auth.onAuthStateChange((_ev,session)=>{ if(session&&!started){ started=true; start(session) } });
 })();

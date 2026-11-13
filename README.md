@@ -1,17 +1,16 @@
 # LUZIAC Ops
 
-Quadro de tarefas da equipe LUZIAC: carga, atrasos e entregas por pessoa, e o fluxo de produção
-(A fazer → Em produção → Em revisão → Aguardando cliente → Aprovado / publicar → Entregue).
+Tarefas da equipe LUZIAC. Cada tarefa tem cliente, responsável e um **checklist de etapas com dono**:
+a tarefa fica "com" quem tem a próxima etapa pendente, e aparece nos avisos "Para você" dessa pessoa.
 
-- Tela: `index.html` + `app.js`, publicada pelo GitHub Pages
-- Dados e login: Supabase (`supabase/schema.sql`)
-- Configuração: `config.js` (URL e chave pública do Supabase)
+- **Quadro**: Kanban (A fazer → Em andamento → Aguardando cliente → Concluído), com filtros
+- **Clientes**: todas as tarefas de cada cliente
+- **Equipe**: perfil de cada pessoa, com tudo que ela tem, agrupado por cliente; dá para marcar a etapa como feita direto ali
+- **Modelos**: checklists prontos (Criativo estático, Gravação…) para criar tarefas mais rápido
+
+Tela: `index.html`, `style.css`, `app.js` (GitHub Pages). Dados e login: Supabase (`supabase/*.sql`, rodar em ordem).
 
 ## Ajustes do dia a dia
-- Equipe, funções e áreas: constantes `TEAM` e `AREAS` no topo de `app.js`
-- Etapas do fluxo: `COLS` em `app.js`
-- Limite de carga por pessoa: `WIP` em `app.js`
-
-## Acesso
-Os usuários são criados no Supabase em Authentication → Users → Add user (e-mail e senha).
-O cadastro público fica desligado: só entra quem foi adicionado.
+- Equipe e funções: `TEAM` no topo de `app.js`
+- Etapas do Kanban: `COLS` em `app.js`
+- Usuários: Supabase → Authentication → Users → Add user (com Auto Confirm). No primeiro acesso a pessoa escolhe o próprio nome.
