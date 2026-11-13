@@ -153,7 +153,7 @@ def meta_alerts(rows, accounts, d):
             a["y1"] += s
         if day in {d(i) for i in range(2, 9)} and s > 0:
             a["days_prev"].add(day)
-        key = (aid, r.get("adset_name") or r.get("campaign") or "")
+        key = (aid, r.get("campaign") or "", r.get("adset_name") or "")
         ad = adset[key]
         ad["campaign"] = r.get("campaign") or ad["campaign"]
         if day in (y1, y2):
@@ -203,13 +203,13 @@ def meta_alerts(rows, accounts, d):
                             "detalhe": f"Saldo de {brl(max(saldo, 0))} no limite de gastos, no ritmo de {brl(ritmo)}/dia. Fundos disponíveis no Gerenciador: {brl(fundos)}.",
                             "numeros": {"dias": round(dias, 1), "saldo": round(saldo, 2), "ritmo": round(ritmo, 2)}})
 
-    for (aid, name), ad in adset.items():
+    for (aid, cname, name), ad in adset.items():
         if ad["s2"] >= SEM_LEAD_GASTO and ad["l2"] == 0 and ad["lhist"] >= SEM_LEAD_HISTORICO:
             a = acc[aid]
             out.append({"cliente": client_for(aid, a["name"]), "conta": a["name"], "plataforma": "meta",
-                        "id": f"sem_lead:{aid}:{norm(name)[:80]}", "tipo": "sem_lead", "nivel": "atencao",
-                        "titulo": f"{name or 'Conjunto'} sem leads há 2 dias",
-                        "detalhe": f"Gastou {brl(ad['s2'])} ontem e anteontem sem nenhum lead, mas vinha gerando ({int(ad['lhist'])} leads nos 13 dias antes).",
+                        "id": f"sem_lead:{aid}:{norm(cname)[:60]}:{norm(name)[:60]}", "tipo": "sem_lead", "nivel": "atencao",
+                        "titulo": f"{name or cname or 'Conjunto'} sem leads há 2 dias",
+                        "detalhe": f"Campanha {cname}. Gastou {brl(ad['s2'])} ontem e anteontem sem nenhum lead, mas vinha gerando ({int(ad['lhist'])} leads nos 13 dias antes).",
                         "numeros": {"gasto_2d": round(ad["s2"], 2), "leads_antes": ad["lhist"]}})
     return out
 
@@ -268,6 +268,11 @@ def main():
     except Exception as e:
         errors.append(str(e)); print("ERRO Google:", e, file=sys.stderr)
 
+    uniq = {}
+    for a in alerts:
+        if a["id"] not in uniq or (a["nivel"] == "urgente" and uniq[a["id"]]["nivel"] != "urgente"):
+            uniq[a["id"]] = a
+    alerts = list(uniq.values())
     now = datetime.now(timezone.utc).isoformat()
     existing = {a["id"]: a for a in (sb(skey, "GET", "alertas?select=id,ativo,plataforma") or [])}
     fresh, cont = [], []
