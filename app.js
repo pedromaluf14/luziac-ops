@@ -483,9 +483,14 @@ $("newTask").onclick=()=>openTask(null, S.route.client?{cliente:S.route.client}:
 const BG=(function(){
   const cv=$("bgfx"); if(!cv||!cv.getContext) return {start(){},stop(){}};
   const ctx=cv.getContext("2d"), G=44, reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let w=0,h=0,dpr=1,raf=0,running=false,pulses=[],cells=[],mx=-999,my=-999,tx=-999,ty=-999,last=0;
+  /* celular/toque: versão leve (resolução 1x, menos elementos, ~30 quadros por segundo) */
+  const lite=matchMedia("(pointer: coarse)").matches||innerWidth<760;
+  let w=0,h=0,dpr=1,raf=0,running=false,paused=false,pulses=[],cells=[],mx=-999,my=-999,tx=-999,ty=-999,last=0,acc=0;
   const light=()=>document.documentElement.dataset.mode==="light";
-  function size(){ dpr=Math.min(devicePixelRatio||1,2); w=innerWidth; h=innerHeight; cv.width=w*dpr; cv.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0) }
+  function size(force){
+    /* o teclado do celular muda só a altura: ignora para não refazer a tela a cada toque */
+    if(!force && innerWidth===w) return;
+    dpr=lite?1:Math.min(devicePixelRatio||1,2); w=innerWidth; h=Math.max(innerHeight,screen.height||0); cv.width=w*dpr; cv.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0) }
   function newPulse(){
     const horiz=Math.random()<.5, dir=Math.random()<.5?1:-1, speed=120+Math.random()*220;
     const line=horiz?Math.floor(Math.random()*(h/G+1))*G:Math.floor(Math.random()*(w/G+1))*G;
@@ -495,20 +500,24 @@ const BG=(function(){
   function newCell(){ return {x:Math.floor(Math.random()*(w/G))*G, y:Math.floor(Math.random()*(h/G))*G, t:0, life:1.6+Math.random()*2.4, big:Math.random()<.15} }
   function frame(now){
     if(!running) return;
-    const dt=Math.min(.05,(now-(last||now))/1000); last=now;
+    raf=requestAnimationFrame(frame);
+    if(paused) { last=now; return }
+    const step=(now-(last||now))/1000; last=now;
+    if(lite){ acc+=step; if(acc<1/30) return; }
+    const dt=Math.min(.05,lite?acc:step); acc=0;
     ctx.clearRect(0,0,w,h);
     const L=light(), base=L?"20,18,20":"255,255,255";
     // brilho que segue o mouse (suave)
     tx+=(mx-tx)*.08; ty+=(my-ty)*.08;
     if(tx>-500){ const g=ctx.createRadialGradient(tx,ty,0,tx,ty,320); g.addColorStop(0,`rgba(251,37,118,${L?.10:.16})`); g.addColorStop(1,"rgba(251,37,118,0)"); ctx.fillStyle=g; ctx.fillRect(tx-320,ty-320,640,640) }
     // quadradinhos acendendo
-    while(cells.length<Math.round(w*h/26000)) cells.push(newCell());
+    while(cells.length<Math.round(w*h/(lite?60000:26000))) cells.push(newCell());
     cells=cells.filter(c=>{ c.t+=dt; const p=c.t/c.life; if(p>=1) return false;
       const a=Math.sin(p*Math.PI)*(c.big?.55:.35);
       ctx.fillStyle=c.big?`rgba(251,37,118,${a})`:`rgba(${base},${a*(L?.35:.22)})`;
       const s=c.big?G-2:7; ctx.fillRect(c.x+(G-s)/2,c.y+(G-s)/2,s,s); return true });
     // pulsos correndo pelas linhas da grade
-    while(pulses.length<Math.max(6,Math.round((w+h)/260))) pulses.push(newPulse());
+    while(pulses.length<(lite?4:Math.max(6,Math.round((w+h)/260)))) pulses.push(newPulse());
     pulses=pulses.filter(p=>{ p.pos+=p.speed*p.dir*dt;
       const head=p.pos, tail=p.pos-p.tail*p.dir;
       const [x1,y1,x2,y2]=p.horiz?[tail,p.line,head,p.line]:[p.line,tail,p.line,head];
@@ -516,17 +525,20 @@ const BG=(function(){
       ctx.strokeStyle=g; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
       ctx.fillStyle=`rgba(${p.hue},1)`; ctx.fillRect((p.horiz?head:p.line)-2,(p.horiz?p.line:head)-2,4,4);
       return p.dir>0?tail<p.len:tail>-200 });
-    raf=requestAnimationFrame(frame);
   }
   const move=e=>{ mx=e.clientX; my=e.clientY; if(tx<-500){ tx=mx; ty=my } };
   return {
-    start(){ if(reduce||running) return; running=true; size(); document.body.classList.add("on-login");
+    pause(v){ paused=v },
+    start(){ if(reduce||running) return; running=true; w=0; size(true); document.body.classList.add("on-login"); if(lite) document.body.classList.add("lite");
       addEventListener("resize",size); addEventListener("pointermove",move); last=0; raf=requestAnimationFrame(frame) },
-    stop(){ running=false; cancelAnimationFrame(raf); document.body.classList.remove("on-login");
+    stop(){ running=false; cancelAnimationFrame(raf); document.body.classList.remove("on-login","lite");
       removeEventListener("resize",size); removeEventListener("pointermove",move); ctx.clearRect(0,0,w,h) }
   };
 })();
 document.addEventListener("visibilitychange",()=>{ if(!$("login").hidden){ document.hidden?BG.stop():BG.start() } });
+/* enquanto digita no login, a animação pausa: o toque e o teclado ficam leves */
+$("fLogin").addEventListener("focusin",()=>BG.pause(true));
+$("fLogin").addEventListener("focusout",()=>setTimeout(()=>{ if(!$("fLogin").contains(document.activeElement)) BG.pause(false) },50));
 
 function start(session){
   BG.stop(); $("login").hidden=true; $("app").hidden=false;

@@ -340,3 +340,8 @@ body.on-login .b2{ animation:drift2 22s ease-in-out infinite alternate; }
 @keyframes rise{ from{ opacity:0; transform:translateY(14px) scale(.985); } to{ opacity:1; transform:none; } }
 @keyframes pop{ 0%,70%,100%{ transform:none; } 80%{ transform:translateY(-6px); } 90%{ transform:translateY(0) scale(1.15,.85); } }
 @media (prefers-reduced-motion:reduce){ #bgfx{ display:none; } body.on-login .b1,body.on-login .b2,.login-card,.login-title .grad{ animation:none; } }
+
+/* versão leve no celular: sem vidro desfocado nem manchas animadas (são o que mais pesa no iPhone) */
+body.lite .login-card{ -webkit-backdrop-filter:none; backdrop-filter:none; background:var(--card); }
+body.lite.on-login .b1,body.lite.on-login .b2{ animation:none; }
+body.lite .blob{ filter:blur(60px); }
