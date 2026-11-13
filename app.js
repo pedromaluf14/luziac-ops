@@ -65,6 +65,7 @@ window.addEventListener("hashchange",()=>{ S.route=parseRoute(); render(); windo
 /* ===== Render ===== */
 function render(){
   document.querySelectorAll("[data-tab]").forEach(a=>a.classList.toggle("active",a.dataset.tab===S.route.tab));
+  document.querySelectorAll("[data-tab]").forEach(a=>{ if(!a.dataset.ic){ a.dataset.ic=1; a.insertAdjacentHTML("afterbegin",ic({quadro:"board",clientes:"building",equipe:"users",modelos:"copy",torre:"radar"}[a.dataset.tab])) } });
   const home=S.route.tab==="quadro";
   document.querySelector(".hero").hidden=!home;
   renderHello(); renderForYou(); renderTorreBadge();
@@ -152,25 +153,59 @@ function viewBoard(){
     </div>${boardHTML(filtered())}`;
 }
 
+/* ícones (traço fino, herdam a cor do texto) */
+const ICON={
+  list:'<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  alert:'<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  hourglass:'<path d="M6 2h12M6 22h12M7 2c0 5 10 6 10 10S7 17 7 22M17 2c0 5-10 6-10 10s10 5 10 10"/>',
+  radar:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/>',
+  arrow:'<path d="M9 6l6 6-6 6"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  board:'<rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="13" rx="1"/>',
+  building:'<path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M14 9h5a1 1 0 0 1 1 1v11M3 21h18M8 8h2M8 12h2M8 16h2"/>',
+  users:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/>',
+  copy:'<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>'};
+const ic=(k,cls="")=>`<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>`;
+
+function clientStats(id){
+  const open=S.tasks.filter(t=>t.cliente===id&&t.status!=="feito");
+  const al=S.alerts.filter(a=>a.ativo&&a.cliente===id&&!a.visto_por);
+  return {open, late:open.filter(isLate).length, wait:open.filter(t=>t.status==="aguardando").length,
+    doing:open.filter(t=>t.status==="andamento").length, alerts:al.length, urgent:al.some(a=>a.nivel==="urgente"),
+    next:open.map(dueOf).filter(Boolean).sort()[0]||"", holders:[...new Set(open.map(holder).filter(Boolean))]};
+}
+const mono=name=>`<span class="mono">${esc(initials(name.replace(/^(lopes|rede)\s+/i,"")))}</span>`;
 function viewClients(){
-  const list=[...S.clients].sort((a,b)=>a.name.localeCompare(b.name,"pt")).map(c=>{
-    const open=S.tasks.filter(t=>t.cliente===c.id&&t.status!=="feito");
-    const late=open.filter(isLate).length, wait=open.filter(t=>t.status==="aguardando").length;
-    const holders=[...new Set(open.map(holder).filter(Boolean))];
-    return `<a class="gcard" href="#cliente-${esc(c.id)}"><span class="gn">${esc(c.name)}</span>
-      <span class="nums"><div><b>${open.length}</b><small>abertas</small></div><div class="${wait?"warn":""}"><b>${wait}</b><small>com cliente</small></div><div class="${late?"bad":""}"><b>${late}</b><small>atrasadas</small></div></span>
-      <span class="avs">${holders.slice(0,6).map(n=>av(n,"sm")).join("")||'<span class="gs">Nenhuma tarefa aberta</span>'}</span></a>`;
-  }).join("");
-  return `<div class="sec-h"><h2 class="sec-title">Clientes</h2><button class="btn" id="newClient" type="button">+ cliente</button></div><div class="grid">${list}</div>`;
+  const q=(S.cq||"").trim().toLowerCase();
+  const all=[...S.clients].sort((a,b)=>a.name.localeCompare(b.name,"pt")).filter(c=>!q||c.name.toLowerCase().includes(q));
+  const rows=all.map(c=>({c,st:clientStats(c.id)}));
+  const active=rows.filter(r=>r.st.open.length||r.st.alerts)
+    .sort((a,b)=>(b.st.urgent-a.st.urgent)||(b.st.late-a.st.late)||(b.st.alerts-a.st.alerts)||(b.st.open.length-a.st.open.length));
+  const quiet=rows.filter(r=>!r.st.open.length&&!r.st.alerts);
+  const pill=(k,n,label,cls="")=>n?`<span class="kp ${cls}">${ic(k)}<b>${n}</b> ${label}</span>`:"";
+  const cards=active.map(({c,st})=>`<a class="ccard ${st.urgent||st.late?"hot":""}" href="#cliente-${esc(c.id)}">
+      <span class="cc-top">${mono(c.name)}<span class="cc-name">${esc(c.name)}</span>${ic("arrow","go")}</span>
+      <span class="kps">${pill("list",st.open.length,st.open.length===1?"aberta":"abertas")}${pill("hourglass",st.wait,"com cliente","warn")}${pill("alert",st.late,st.late===1?"atrasada":"atrasadas","bad")}${pill("radar",st.alerts,st.alerts===1?"alerta":"alertas",st.urgent?"bad":"warn")}</span>
+      <span class="cc-foot"><span class="avs">${st.holders.slice(0,5).map(n=>av(n,"sm")).join("")}</span>${st.next?`<span class="muted">${ic("clock")} próxima entrega ${ddmm(st.next)}</span>`:""}</span></a>`).join("");
+  return `<div class="sec-h"><div><h2 class="sec-title">Clientes</h2><p class="muted" style="margin:4px 0 0">${active.length} com movimento · ${quiet.length} sem tarefas abertas</p></div>
+      <div class="sec-actions"><label class="search-ic">${ic("search")}<input class="search" id="cq" type="search" placeholder="Buscar cliente" value="${esc(S.cq||"")}" aria-label="Buscar cliente"></label>
+      <button class="btn" id="newClient" type="button">${ic("plus")} Cliente</button></div></div>
+    ${cards?`<div class="cgrid">${cards}</div>`:""}
+    ${quiet.length?`<div class="quiet"><span class="label">Sem tarefas abertas</span><div class="qlist">${quiet.map(({c})=>`<a class="qchip" href="#cliente-${esc(c.id)}">${mono(c.name)}${esc(c.name)}</a>`).join("")}</div></div>`:""}
+    ${!all.length?`<p class="muted">Nenhum cliente encontrado.</p>`:""}`;
 }
 
 function viewClient(id){
   const c=S.clients.find(x=>x.id===id);
   if(!c) return `<a class="link-btn back" href="#clientes">← Clientes</a><p class="muted">Cliente não encontrado.</p>`;
   const list=S.tasks.filter(t=>t.cliente===id);
+  const al=S.alerts.filter(a=>a.ativo&&a.cliente===id&&!a.visto_por);
   return `<a class="link-btn back" href="#clientes">← Clientes</a>
-    <div class="page-head"><div><span class="label">Cliente</span><h2 class="sec-title" style="font-size:32px">${esc(c.name)}</h2></div>
+    <div class="page-head"><div class="who">${mono(c.name).replace('class="mono"','class="mono lg"')}<div><span class="label">Cliente</span><h2 class="sec-title" style="font-size:32px">${esc(c.name)}</h2></div></div>
     <button class="btn primary" type="button" data-add='${esc(JSON.stringify({cliente:id}))}'>+ tarefa para ${esc(c.name)}</button></div>
+    ${al.length?`<div class="group"><div class="group-h"><span class="gname u">${ic("radar")} Torre de controle</span><span class="gcount">${al.length}</span></div><div class="alerts">${al.map(alertCard).join("")}</div></div>`:""}
     ${boardHTML(list,{cliente:id})}`;
 }
 
@@ -254,6 +289,7 @@ function bindView(){
   const cl=$("clear"); if(cl) cl.onclick=()=>{ S.fClient=""; S.fWho=""; S.q=""; render() };
   const nc=$("newClient"); if(nc) nc.onclick=()=>{ $("cNome").value=""; $("dClient").showModal() };
   const nt=$("newTpl"); if(nt) nt.onclick=()=>openTpl(null);
+  const cq=$("cq"); if(cq) cq.oninput=e=>{ S.cq=e.target.value; const pos=e.target.selectionStart; render(); const n=$("cq"); n.focus(); try{n.setSelectionRange(pos,pos)}catch(_){} };
   const ss=$("showSeen"); if(ss) ss.onchange=e=>{ S.showSeen=e.target.checked; render() };
 }
 document.addEventListener("click",e=>{
